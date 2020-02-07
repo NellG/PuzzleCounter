@@ -1,0 +1,23 @@
+{
+    "collab_server" : "",
+    "contents" : "",
+    "created" : 1580959206104.000,
+    "dirty" : false,
+    "encoding" : "UTF-8",
+    "folds" : "",
+    "hash" : "278436698",
+    "id" : "4F4C609D",
+    "lastKnownWriteTime" : 1580961500,
+    "last_content_update" : 1580961500740,
+    "path" : "C:/Code/R/PuzzleCounter/speech_trainer_command_data.R",
+    "project_path" : "speech_trainer_command_data.R",
+    "properties" : {
+        "cursorPosition" : "8,0",
+        "scrollLine" : "5",
+        "tempName" : "Untitled1"
+    },
+    "relative_order" : 1,
+    "source_on_save" : false,
+    "source_window" : "",
+    "type" : "r_source"
+}
