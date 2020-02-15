@@ -1,5 +1,9 @@
 # Following basic tutorial for Keras in R from:
 # https://keras.rstudio.com/
+# Spectrogram creation starts from:
+# https://hansenjohnson.org/post/spectrograms-in-r/
+# Model architecture from:
+# https://blogs.rstudio.com/tensorflow/posts/2018-06-06-simple-audio-classification-keras/
 
 library(keras)
 library(pbapply)
@@ -12,21 +16,17 @@ library(ggalluvial)
 library(alluvial)
 library(dplyr)
 
+# clear environment
 rm(list=ls())
 gc()
-
-# # Get mnist digit data
-# mnist <- dataset_mnist()
-# x_train <- mnist$train$x
-# y_train <- mnist$train$y
-# x_test <- mnist$test$x
-# y_test <- mnist$test$y
 
 # Get speech file list
 files <- fs:: dir_ls(path = 'data/speech_commands_v0.01/',
                      recurse = TRUE, glob = '*.wav')
 
-# keep all files except those with background_noise in the name
+# Keep all files except those with background_noise in the name 
+# (Also deleted one of the "bird" files which had 0 amplitude throughout
+# and gave NaN spectrogram.)
 files <- files[!str_detect(files, "background_noise")]
 
 # Make a tibble of filenames, class (word spoken), and 
@@ -37,14 +37,13 @@ df <- tibble(fname = files,
                str_replace_all("/", ""),
              class_id = class %>% as.factor() %>% as.integer() - 1L)
 
-# Check data
+# Check a random sampling of the data
 check = sample(nrow(df), 20)
 df[check,]
 
 # Make training and test subsets
 size <- 64720
-split <- 0.8
-#options <- which(df$class_id < 31)
+split <- 0.8 # fraction of data to use in training set
 options <- sample(which(df$class_id < 31), size)
 train <- options[1:as.integer(split*size)]
 test <- options[(as.integer(split*size)+1):size]
@@ -59,10 +58,10 @@ make_spec <- function(filename, window, overlap){
   
   # Create spectrogram
   spec <- specgram(x=snd, n=window, Fs = 16000, overlap=overlap)
-  P <- abs(spec$S)
-  P <- P/max(P)
-  P <- (log10(P + 1e-6) + 6) / 6
-  check_nan = which(is.na(P))
+  P <- abs(spec$S) # omit phase component of signal
+  P <- P/max(P) # normalize P
+  P <- (log10(P + 1e-6) + 6) / 6 # take log10 and adjust so P is in [0:1]
+  check_nan = which(is.na(P)) # flag any spectrogam with NaN
   if (length(check_nan !=0)) {
     print(paste("NaN in ", filename))
   }
@@ -72,22 +71,19 @@ make_spec <- function(filename, window, overlap){
 # Define data generation funtion
 data_gen <- function(df, window, overlap){
   print(paste('Start processing', nrow(df), 'images'))
-  #print(length(df$fname))
   specs <- pbsapply(df$fname, FUN=make_spec, 
                     window=window, overlap=overlap, 
                     simplify = 'array')
   #print(dim(specs))
-  #specs <- aperm(specs, c(3, 2, 1)) # 3 dimensional array
-  dim(specs) <- c(dim(specs), 1)
-  specs <- aperm(specs, c(3, 2, 1, 4))
+  dim(specs) <- c(dim(specs), 1) # third dimension needed for model
+  specs <- aperm(specs, c(3, 2, 1, 4)) # reorder dimensions
   print('Finished! Check plot.')
-  image(z=specs[1,,,], main=df$fname[1])
+  image(z=specs[1,,,], main=df$fname[1]) # plot image to check orientation
   return(specs)
 }
 
 # Set up spectrogram creation
 # Note: wav files need sample rate 16000 Hz and length <= 1 sec
-
 window <- 480
 stride <- 240
 overlap <- window - stride
@@ -97,34 +93,14 @@ train_specs <- data_gen(df[train,], window, overlap)
 gc()
 
 # Refactor the train and test sets together then make one-hot array
+# (The refactor is needed if a subset of the words are used in training.) 
 newfacs <- as.numeric(as.factor(c(df$class[train], df$class[test])))-1
 types = length(unique(newfacs))
 train_y <- to_categorical(newfacs[1:as.integer(size*split)], types)
 test_y <- to_categorical(newfacs[(as.integer(size*split)+1):size], types)
-#train_y
-#test_y
 
-#
-
-# # Reshape data into matrices by flattening images and normalize
-# #x_train <- array_reshape(x_train, c(nrow(x_train), 784))
-# #x_test <- array_reshape(x_test, c(nrow(x_test), 784))
-# x_train <- x_train / 255
-# x_test <- x_test / 255
-# 
-# # Encode y's as one-hot categorical matrices
-# y_train <- to_categorical(y_train, 10)
-# y_test <- to_categorical(y_test, 10)
-# 
 # Define model
 model <- keras_model_sequential()
-# model %>%
-#   layer_flatten(input_shape = c(65, 240)) %>%
-#   layer_dense(units = 256, activation = 'relu') %>%
-#   layer_dropout(rate = 0.4) %>%
-#   layer_dense(units = 128, activation = 'relu') %>%
-#   layer_dropout(rate = 0.3) %>%
-#   layer_dense(units = types, activation = 'softmax')
 model %>%
   layer_conv_2d(input_shape=c(65, 240, 1), filters=32,
                         kernel_size=c(3,3), activation='relu') %>%
@@ -149,30 +125,36 @@ model %>% compile(
   metrics = c('accuracy')
 )
 
+# Train model
 history <- model %>% fit(train_specs, train_y, epochs = 30,
                          batch_size = 128, validation_split = 0.2)
 plot(history)
 
+# Assemble spectrograms for test set (done after model training to keep
+# memory free).
 test_specs <- data_gen(df[test,], window, overlap)
+
+# Predict test set
 model %>% evaluate(test_specs, test_y)
 classes <- model %>% predict_classes(test_specs) 
 probs <- model %>% predict_proba(test_specs)
-# mnist$test$y
 
-df[test,]
-freq_table <- df[test,] %>% 
-  mutate(pred_class_id = as.integer(classes))
-freq_table
-mixdf <- df[test,] %>% distinct(class_id, class)
-mixdf
+# Make look-up table for words from ID#
+# (Will not work with refactored data.)
+mixdf <- df[test,] %>% distinct(class_id, class) 
 mixdf <- mixdf %>% rename(pred_class = class)
-mixdf
-freq_table <- left_join(freq_table, mixdf, by = c('pred_class_id' = 'class_id'))
-freq_table
-freq_table <- freq_table %>% mutate(correct = pred_class == class) %>% 
-  count(pred_class, class, correct)
+
+# Assemble frequency table
+freq_table <- df[test,] %>% 
+  mutate(pred_class_id = as.integer(classes)) # add prediction column
+freq_table <- left_join(freq_table, mixdf, # join with LUT
+                        by = c('pred_class_id' = 'class_id'))
+freq_table <- freq_table %>% 
+  mutate(correct = pred_class == class) %>% # add column for correctness
+  count(pred_class, class, correct) # convert to counts for alluvial plot
 freq_table
 
+# Plot actual vs. predicted alluvial table
 alluvial(
   freq_table %>% select(class, pred_class), 
   freq = freq_table$n,
@@ -181,6 +163,7 @@ alluvial(
   alpha = 0.6, hide = freq_table$n < 9
 )
 
+# Save model, test set, training set, and file list for future use
 model %>% save_model_hdf5("speech_model_full_dataset_train01.h5")
 save(train, test, df, 
      file = "trainer_inputs_full_dataset_train01.RData")

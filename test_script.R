@@ -1,3 +1,5 @@
+# Scratchpad script for working out bugs and logic
+
 ## open wav and make spectrogram
 # following https://hansenjohnson.org/post/spectrograms-in-r/
 library(tuneR)
